@@ -80,11 +80,16 @@ In order to bundle all `src/` files into two production scripts and build the ge
 viewer, run:
 
     $ gulp generic
+    $ open http://localhost:8888/build/generic/web/viewer.html
+
+* and then you can open the viewer: http://localhost:8888/build/generic/web/viewer.html
 
 If you need to support older browsers, run:
 
     $ gulp generic-legacy
 
+* and then you can open: http://localhost:8888/build/generic-legacy/web/viewer.html
+* 
 This will generate `pdf.js` and `pdf.worker.js` in the `build/generic/build/` directory (respectively `build/generic-legacy/build/`).
 Both scripts are needed but only `pdf.js` needs to be included since `pdf.worker.js` will
 be loaded by `pdf.js`. The PDF.js files are large and should be minified for production.
