@@ -23,7 +23,7 @@ const gulp = require("gulp");
 const postcss = require("gulp-postcss");
 const rename = require("gulp-rename");
 const replace = require("gulp-replace");
-const mkdirp = require("mkdirp");
+const { mkdirp } = require("mkdirp");
 const path = require("path");
 const rimraf = require("rimraf");
 const stream = require("stream");
@@ -58,7 +58,6 @@ const MINIFIED_LEGACY_DIR = BUILD_DIR + "minified-legacy/";
 const JSDOC_BUILD_DIR = BUILD_DIR + "jsdoc/";
 const GH_PAGES_DIR = BUILD_DIR + "gh-pages/";
 const SRC_DIR = "src/";
-const LIB_DIR = BUILD_DIR + "lib/";
 const DIST_DIR = BUILD_DIR + "dist/";
 const TYPES_DIR = BUILD_DIR + "types/";
 const TMP_DIR = BUILD_DIR + "tmp/";
@@ -69,7 +68,6 @@ const COMMON_WEB_FILES = [
 ];
 const MOZCENTRAL_DIFF_FILE = "mozcentral.diff";
 
-const REPO = "git@github.com:mozilla/pdf.js.git";
 const DIST_REPO_URL = "https://github.com/mozilla/pdfjs-dist";
 
 const builder = require("./external/builder/builder.js");
@@ -79,10 +77,10 @@ const config = JSON.parse(fs.readFileSync(CONFIG_FILE).toString());
 
 const ENV_TARGETS = [
   "last 2 versions",
-  "Chrome >= 87",
+  "Chrome >= 88",
   "Firefox ESR",
   "Safari >= 14.1",
-  "Node >= 14",
+  "Node >= 16",
   "> 1%",
   "not IE > 0",
   "not dead",
@@ -96,7 +94,6 @@ const AUTOPREFIXER_CONFIG = {
 const BABEL_TARGETS = ENV_TARGETS.join(", ");
 
 const DEFINES = Object.freeze({
-  PRODUCTION: true,
   SKIP_BABEL: true,
   TESTING: undefined,
   // The main build targets:
@@ -130,7 +127,7 @@ function safeSpawnSync(command, parameters, options) {
     if (!/[\s`~!#$*(){[|\\;'"<>?]/.test(param)) {
       return param;
     }
-    return '"' + param.replace(/([$\\"`])/g, "\\$1") + '"';
+    return '"' + param.replaceAll(/([$\\"`])/g, "\\$1") + '"';
   });
 
   const result = spawnSync(command, parameters, options);
@@ -264,8 +261,11 @@ function createWebpackConfig(
     viewerAlias["web-print_service"] = "web/pdf_print_service.js";
   } else if (bundleDefines.MOZCENTRAL) {
     if (bundleDefines.GECKOVIEW) {
+      const gvAlias = {
+        "web-toolbar": "web/toolbar-geckoview.js",
+      };
       for (const key in viewerAlias) {
-        viewerAlias[key] = "web/stubs-geckoview.js";
+        viewerAlias[key] = gvAlias[key] || "web/stubs-geckoview.js";
       }
     } else {
       viewerAlias["web-print_service"] = "web/firefox_print_service.js";
@@ -434,12 +434,15 @@ function createSandboxExternal(defines) {
     saveComments: false,
     defines,
   };
-  return gulp.src("./src/pdf.sandbox.external.js").pipe(
-    transform("utf8", content => {
-      content = preprocessor2.preprocessPDFJSCode(ctx, content);
-      return `${licenseHeader}\n${content}`;
-    })
-  );
+  return gulp
+    .src("./src/pdf.sandbox.external.js")
+    .pipe(rename("pdf.sandbox.external.sys.mjs"))
+    .pipe(
+      transform("utf8", content => {
+        content = preprocessor2.preprocessPDFJSCode(ctx, content);
+        return `${licenseHeader}\n${content}`;
+      })
+    );
 }
 
 function createTemporaryScriptingBundle(defines, extraOptions = undefined) {
@@ -909,7 +912,7 @@ function preprocessCSS(source, defines) {
 
   // Strip out all license headers in the middle.
   const reg = /\n\/\* Copyright(.|\n)*?Mozilla Foundation(.|\n)*?\*\//g;
-  out = out.replace(reg, "");
+  out = out.replaceAll(reg, "");
 
   const i = source.lastIndexOf("/");
   return createStringSource(source.substr(i + 1), out);
@@ -1264,7 +1267,6 @@ function preprocessDefaultPreferences(content) {
   const preprocessor2 = require("./external/builder/preprocessor2.js");
   const licenseHeader = fs.readFileSync("./src/license_header.js").toString();
 
-  const GLOBALS = "/* eslint-disable */\n";
   const MODIFICATION_WARNING =
     "//\n// THIS FILE IS GENERATED AUTOMATICALLY, DO NOT EDIT MANUALLY!\n//\n";
 
@@ -1280,16 +1282,11 @@ function preprocessDefaultPreferences(content) {
     content
   );
 
-  return (
-    licenseHeader +
-    "\n" +
-    GLOBALS +
-    "\n" +
-    MODIFICATION_WARNING +
-    "\n" +
-    content +
-    "\n"
-  );
+  return licenseHeader + "\n" + MODIFICATION_WARNING + "\n" + content + "\n";
+}
+
+function replaceMozcentralCSS() {
+  return replace(/var\(--(inline-(?:start|end))\)/g, "$1");
 }
 
 gulp.task(
@@ -1316,6 +1313,9 @@ gulp.task(
         ...COMMON_WEB_FILES,
         "!web/images/toolbarButton-openFile.svg",
       ];
+      const MOZCENTRAL_AUTOPREFIXER_CONFIG = {
+        overrideBrowserslist: ["last 1 firefox versions"],
+      };
 
       // Clear out everything in the firefox extension build directory
       rimraf.sync(MOZCENTRAL_DIR);
@@ -1357,23 +1357,13 @@ gulp.task(
         ),
 
         preprocessCSS("web/viewer.css", defines)
-          .pipe(
-            postcss([
-              autoprefixer({
-                overrideBrowserslist: ["last 1 firefox versions"],
-              }),
-            ])
-          )
+          .pipe(postcss([autoprefixer(MOZCENTRAL_AUTOPREFIXER_CONFIG)]))
+          .pipe(replaceMozcentralCSS())
           .pipe(gulp.dest(MOZCENTRAL_CONTENT_DIR + "web")),
 
         preprocessCSS("web/viewer-geckoview.css", defines)
-          .pipe(
-            postcss([
-              autoprefixer({
-                overrideBrowserslist: ["last 1 firefox versions"],
-              }),
-            ])
-          )
+          .pipe(postcss([autoprefixer(MOZCENTRAL_AUTOPREFIXER_CONFIG)]))
+          .pipe(replaceMozcentralCSS())
           .pipe(gulp.dest(MOZCENTRAL_CONTENT_DIR + "web")),
 
         gulp
@@ -1381,7 +1371,7 @@ gulp.task(
           .pipe(gulp.dest(MOZCENTRAL_L10N_DIR)),
         gulp.src("LICENSE").pipe(gulp.dest(MOZCENTRAL_EXTENSION_DIR)),
         gulp
-          .src(FIREFOX_CONTENT_DIR + "PdfJsDefaultPreferences.jsm")
+          .src(FIREFOX_CONTENT_DIR + "PdfJsDefaultPreferences.sys.mjs")
           .pipe(transform("utf8", preprocessDefaultPreferences))
           .pipe(gulp.dest(MOZCENTRAL_CONTENT_DIR)),
       ]);
@@ -1462,7 +1452,7 @@ gulp.task(
           .pipe(
             postcss([
               postcssDirPseudoClass(),
-              autoprefixer({ overrideBrowserslist: ["Chrome >= 87"] }),
+              autoprefixer(AUTOPREFIXER_CONFIG),
             ])
           )
           .pipe(gulp.dest(CHROME_BUILD_CONTENT_DIR + "web")),
@@ -1486,19 +1476,22 @@ gulp.task(
   )
 );
 
-gulp.task("jsdoc", async function (done) {
+gulp.task("jsdoc", function (done) {
   console.log();
   console.log("### Generating documentation (JSDoc)");
 
   const JSDOC_FILES = ["src/display/api.js"];
 
-  await rimraf(JSDOC_BUILD_DIR);
-  await mkdirp(JSDOC_BUILD_DIR);
-
-  const command = `"node_modules/.bin/jsdoc" -d ${JSDOC_BUILD_DIR} ${JSDOC_FILES.join(
-    " "
-  )}`;
-  exec(command, done);
+  rimraf(JSDOC_BUILD_DIR, function () {
+    mkdirp(JSDOC_BUILD_DIR).then(function () {
+      const command =
+        '"node_modules/.bin/jsdoc" -d ' +
+        JSDOC_BUILD_DIR +
+        " " +
+        JSDOC_FILES.join(" ");
+      exec(command, done);
+    });
+  });
 });
 
 gulp.task("types", function (done) {
@@ -1554,9 +1547,10 @@ function buildLibHelper(bundleDefines, inputStream, outputDir) {
     }).code;
     const removeCjsSrc =
       /^(var\s+\w+\s*=\s*(_interopRequireDefault\()?require\(".*?)(?:\/src)(\/[^"]*"\)\)?;)$/gm;
-    content = content.replace(removeCjsSrc, (all, prefix, interop, suffix) => {
-      return prefix + suffix;
-    });
+    content = content.replaceAll(
+      removeCjsSrc,
+      (all, prefix, interop, suffix) => prefix + suffix
+    );
     return licenseHeaderLibre + content;
   }
   const babel = require("@babel/core");
@@ -2076,12 +2070,11 @@ gulp.task(
   )
 );
 
-gulp.task("clean", async function (done) {
+gulp.task("clean", function (done) {
   console.log();
   console.log("### Cleaning up project builds");
 
-  await rimraf(BUILD_DIR);
-  done();
+  rimraf(BUILD_DIR, done);
 });
 
 gulp.task("importl10n", function (done) {
@@ -2139,33 +2132,6 @@ gulp.task("wintersmith", function (done) {
   });
 });
 
-function ghPagesGit(done) {
-  const VERSION = getVersionJSON().version;
-  const reason = process.env.PDFJS_UPDATE_REASON;
-
-  safeSpawnSync("git", ["init"], { cwd: GH_PAGES_DIR });
-  safeSpawnSync("git", ["remote", "add", "origin", REPO], {
-    cwd: GH_PAGES_DIR,
-  });
-  safeSpawnSync("git", ["add", "-A"], { cwd: GH_PAGES_DIR });
-  safeSpawnSync(
-    "git",
-    [
-      "commit",
-      "-am",
-      "gh-pages site created via gulpfile.js script",
-      "-m",
-      "PDF.js version " + VERSION + (reason ? " - " + reason : ""),
-    ],
-    { cwd: GH_PAGES_DIR }
-  );
-  safeSpawnSync("git", ["branch", "-m", "gh-pages"], { cwd: GH_PAGES_DIR });
-
-  console.log();
-  console.log("Website built in " + GH_PAGES_DIR);
-  done();
-}
-
 gulp.task(
   "web",
   gulp.series(
@@ -2173,8 +2139,7 @@ gulp.task(
     "generic-legacy",
     "jsdoc",
     ghPagesPrepare,
-    "wintersmith",
-    ghPagesGit
+    "wintersmith"
   )
 );
 
@@ -2199,7 +2164,7 @@ function packageJson() {
     bugs: DIST_BUGS_URL,
     license: DIST_LICENSE,
     optionalDependencies: {
-      canvas: "^2.11.0",
+      canvas: "^2.11.2",
     },
     dependencies: {
       "path2d-polyfill": "^2.0.1",
@@ -2218,6 +2183,9 @@ function packageJson() {
       type: "git",
       url: DIST_REPO_URL,
     },
+    engines: {
+      node: ">=16",
+    },
   };
 
   return createStringSource(
@@ -2235,7 +2203,6 @@ gulp.task(
     "components-legacy",
     "image_decoders",
     "image_decoders-legacy",
-    "lib",
     "minified",
     "minified-legacy",
     "types",
@@ -2249,7 +2216,7 @@ gulp.task(
 
       console.log();
       console.log("### Overwriting all files");
-      rimraf.sync(DIST_DIR);
+      rimraf.sync(path.join(DIST_DIR, "*"));
 
       return merge([
         packageJson().pipe(gulp.dest(DIST_DIR)),
@@ -2325,9 +2292,6 @@ gulp.task(
             base: IMAGE_DECODERS_LEGACY_DIR,
           })
           .pipe(gulp.dest(DIST_DIR + "legacy/image_decoders/")),
-        gulp
-          .src(LIB_DIR + "**/*", { base: LIB_DIR })
-          .pipe(gulp.dest(DIST_DIR + "lib/")),
         gulp
           .src(TYPES_DIR + "**/*", { base: TYPES_DIR })
           .pipe(gulp.dest(DIST_DIR + "types/")),
@@ -2441,7 +2405,7 @@ gulp.task(
       // The mozcentral baseline directory is a Git repository, so we
       // remove all files and copy the current mozcentral build files
       // into it to create the diff.
-      rimraf.sync(MOZCENTRAL_BASELINE_DIR);
+      rimraf.sync(MOZCENTRAL_BASELINE_DIR + "*");
 
       gulp
         .src([BUILD_DIR + "mozcentral/**/*"])

@@ -33,11 +33,9 @@ import {
 } from "./fonts_utils.js";
 import {
   getCharUnicodeCategory,
-  getNormalizedUnicodes,
   getUnicodeForGlyph,
   getUnicodeRangeFor,
   mapSpecialUnicodeValues,
-  reverseIfRtl,
 } from "./unicode.js";
 import { getDingbatsGlyphsUnicode, getGlyphsUnicode } from "./glyphlist.js";
 import {
@@ -277,24 +275,6 @@ class Glyph {
       /* nonSerializable = */ true
     );
   }
-
-  /**
-   * This property, which is only used by `PartialEvaluator.getTextContent`,
-   * is purposely made non-serializable.
-   * @type {string}
-   */
-  get normalizedUnicode() {
-    return shadow(
-      this,
-      "normalizedUnicode",
-      reverseIfRtl(Glyph._NormalizedUnicodes[this.unicode] || this.unicode),
-      /* nonSerializable = */ true
-    );
-  }
-
-  static get _NormalizedUnicodes() {
-    return shadow(this, "_NormalizedUnicodes", getNormalizedUnicodes());
-  }
 }
 
 function int16(b0, b1) {
@@ -316,10 +296,7 @@ function int32(b0, b1, b2, b3) {
 }
 
 function string16(value) {
-  if (
-    typeof PDFJSDev === "undefined" ||
-    PDFJSDev.test("!PRODUCTION || TESTING")
-  ) {
+  if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
     assert(
       typeof value === "number" && Math.abs(value) < 2 ** 16,
       `string16: Unexpected input "${value}".`
@@ -329,10 +306,7 @@ function string16(value) {
 }
 
 function safeString16(value) {
-  if (
-    typeof PDFJSDev === "undefined" ||
-    PDFJSDev.test("!PRODUCTION || TESTING")
-  ) {
+  if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
     assert(
       typeof value === "number" && !Number.isNaN(value),
       `safeString16: Unexpected input "${value}".`
@@ -507,6 +481,9 @@ function adjustMapping(charCodeToGlyphId, hasGlyph, newGlyphZeroId, toUnicode) {
   const privateUseOffetStart = PRIVATE_USE_AREAS[privateUseAreaIndex][0];
   let nextAvailableFontCharCode = privateUseOffetStart;
   let privateUseOffetEnd = PRIVATE_USE_AREAS[privateUseAreaIndex][1];
+  const isInPrivateArea = code =>
+    (PRIVATE_USE_AREAS[0][0] <= code && code <= PRIVATE_USE_AREAS[0][1]) ||
+    (PRIVATE_USE_AREAS[1][0] <= code && code <= PRIVATE_USE_AREAS[1][1]);
   for (let originalCharCode in charCodeToGlyphId) {
     originalCharCode |= 0;
     let glyphId = charCodeToGlyphId[originalCharCode];
@@ -539,11 +516,7 @@ function adjustMapping(charCodeToGlyphId, hasGlyph, newGlyphZeroId, toUnicode) {
     if (typeof unicode === "string") {
       unicode = unicode.codePointAt(0);
     }
-    if (
-      unicode &&
-      unicode < privateUseOffetStart &&
-      !usedGlyphIds.has(glyphId)
-    ) {
+    if (unicode && !isInPrivateArea(unicode) && !usedGlyphIds.has(glyphId)) {
       toUnicodeExtraMap.set(unicode, glyphId);
       usedGlyphIds.add(glyphId);
     }
@@ -770,7 +743,7 @@ function validateOS2Table(os2, file) {
 }
 
 function createOS2Table(properties, charstrings, override) {
-  override = override || {
+  override ||= {
     unitsPerEm: 0,
     yMax: 0,
     yMin: 0,
@@ -785,6 +758,7 @@ function createOS2Table(properties, charstrings, override) {
 
   let firstCharIndex = null;
   let lastCharIndex = 0;
+  let position = -1;
 
   if (charstrings) {
     for (let code in charstrings) {
@@ -796,7 +770,7 @@ function createOS2Table(properties, charstrings, override) {
         lastCharIndex = code;
       }
 
-      const position = getUnicodeRangeFor(code);
+      position = getUnicodeRangeFor(code, position);
       if (position < 32) {
         ulUnicodeRange1 |= 1 << position;
       } else if (position < 64) {
@@ -903,7 +877,7 @@ function createPostTable(properties) {
 
 function createPostscriptName(name) {
   // See https://docs.microsoft.com/en-us/typography/opentype/spec/recom#name.
-  return name.replace(/[^\x21-\x7E]|[[\](){}<>/%]/g, "").slice(0, 63);
+  return name.replaceAll(/[^\x21-\x7E]|[[\](){}<>/%]/g, "").slice(0, 63);
 }
 
 function createNameTable(name, proto) {
@@ -994,7 +968,7 @@ class Font {
     // Fallback to checking the font name, in order to improve text-selection,
     // since the /Flags-entry is often wrong (fixes issue13845.pdf).
     if (!isSerifFont && !properties.isSimulatedFlags) {
-      const baseName = name.replace(/[,_]/g, "-").split("-")[0],
+      const baseName = name.replaceAll(/[,_]/g, "-").split("-")[0],
         serifFonts = getSerifFonts();
       for (const namePart of baseName.split("+")) {
         if (serifFonts[namePart]) {
@@ -1445,7 +1419,7 @@ class Font {
         for (let j = 0, jj = nameTable.length; j < jj; j++) {
           for (let k = 0, kk = nameTable[j].length; k < kk; k++) {
             const nameEntry =
-              nameTable[j][k] && nameTable[j][k].replace(/\s/g, "");
+              nameTable[j][k] && nameTable[j][k].replaceAll(/\s/g, "");
             if (!nameEntry) {
               continue;
             }
@@ -3116,10 +3090,7 @@ class Font {
       let charCodes = null;
       for (const charCode in charCodeToGlyphId) {
         if (glyphId === charCodeToGlyphId[charCode]) {
-          if (!charCodes) {
-            charCodes = [];
-          }
-          charCodes.push(charCode | 0);
+          (charCodes ||= []).push(charCode | 0);
         }
       }
       return charCodes;
@@ -3311,8 +3282,7 @@ class Font {
         break; // the non-zero width found
       }
     }
-    width = width || this.defaultWidth;
-    return shadow(this, "spaceWidth", width);
+    return shadow(this, "spaceWidth", width || this.defaultWidth);
   }
 
   /**

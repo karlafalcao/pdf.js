@@ -17,10 +17,10 @@
 const {
   AnnotationLayer,
   AnnotationMode,
-  createPromiseCapability,
   getDocument,
   GlobalWorkerOptions,
   PixelsPerInch,
+  PromiseCapability,
   renderTextLayer,
   shadow,
   XfaLayer,
@@ -135,6 +135,7 @@ async function convertCanvasesToImages(annotationCanvasMap, outputScale) {
       new Promise(resolve => {
         canvas.toBlob(blob => {
           const image = document.createElement("img");
+          image.classList.add("wasCanvas");
           image.onload = function () {
             image.style.width = Math.floor(image.width / outputScale) + "px";
             resolve();
@@ -468,6 +469,8 @@ class Driver {
             .getElementsByTagName("head")[0]
             .append(xfaStyleElement);
         }
+        const isOffscreenCanvasSupported =
+          task.isOffscreenCanvasSupported === false ? false : undefined;
 
         const loadingTask = getDocument({
           url: new URL(task.file, window.location),
@@ -479,6 +482,7 @@ class Driver {
           useSystemFonts: task.useSystemFonts,
           useWorkerFetch: task.useWorkerFetch,
           enableXfa: task.enableXfa,
+          isOffscreenCanvasSupported,
           styleElement: xfaStyleElement,
         });
         let promise = loadingTask.promise;
@@ -625,6 +629,9 @@ class Driver {
             let viewport = page.getViewport({
               scale: PixelsPerInch.PDF_TO_CSS_UNITS,
             });
+            if (task.rotation) {
+              viewport = viewport.clone({ rotation: task.rotation });
+            }
             // Restrict the test from creating a canvas that is too big.
             const MAX_CANVAS_PIXEL_DIMENSION = 4096;
             const largestDimension = Math.max(viewport.width, viewport.height);
@@ -686,6 +693,7 @@ class Driver {
               initPromise = page
                 .getTextContent({
                   includeMarkedContent: true,
+                  disableNormalization: true,
                 })
                 .then(function (textContent) {
                   return Rasterize.textLayer(
@@ -914,7 +922,7 @@ class Driver {
   }
 
   _send(url, message) {
-    const capability = createPromiseCapability();
+    const capability = new PromiseCapability();
     this.inflight.textContent = this.inFlightRequests++;
 
     fetch(url, {

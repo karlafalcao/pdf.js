@@ -46,17 +46,10 @@ const SidebarView = {
   LAYERS: 4,
 };
 
-const RendererType =
-  typeof PDFJSDev === "undefined" || PDFJSDev.test("!PRODUCTION || GENERIC")
-    ? {
-        CANVAS: "canvas",
-        SVG: "svg",
-      }
-    : null;
-
 const TextLayerMode = {
   DISABLE: 0,
   ENABLE: 1,
+  ENABLE_PERMISSIONS: 2,
 };
 
 const ScrollMode = {
@@ -111,9 +104,11 @@ class OutputScale {
 
 /**
  * Scrolls specified element into view of its parent.
- * @param {Object} element - The element to be visible.
- * @param {Object} spot - An object with optional top and left properties,
+ * @param {HTMLElement} element - The element to be visible.
+ * @param {Object} [spot] - An object with optional top and left properties,
  *   specifying the offset from the top left edge.
+ * @param {number} [spot.left]
+ * @param {number} [spot.top]
  * @param {boolean} [scrollMatches] - When scrolling search results into view,
  *   ignore elements that either: Contains marked content identifiers,
  *   or have the CSS-rule `overflow: hidden;` set. The default value is `false`.
@@ -211,7 +206,6 @@ function parseQueryString(query) {
   return params;
 }
 
-const NullCharactersRegExp = /\x00/g;
 const InvisibleCharactersRegExp = /[\x01-\x1F]/g;
 
 /**
@@ -224,9 +218,9 @@ function removeNullCharacters(str, replaceInvisible = false) {
     return str;
   }
   if (replaceInvisible) {
-    str = str.replace(InvisibleCharactersRegExp, " ");
+    str = str.replaceAll(InvisibleCharactersRegExp, " ");
   }
-  return str.replace(NullCharactersRegExp, "");
+  return str.replaceAll("\x00", "");
 }
 
 /**
@@ -850,6 +844,13 @@ function apiPageModeToSidebarView(mode) {
   return SidebarView.NONE; // Default value.
 }
 
+function toggleCheckedBtn(button, toggle, view = null) {
+  button.classList.toggle("toggled", toggle);
+  button.setAttribute("aria-checked", toggle);
+
+  view?.classList.toggle("hidden", !toggle);
+}
+
 export {
   animationStarted,
   apiPageLayoutToViewerModes,
@@ -881,7 +882,6 @@ export {
   PresentationModeState,
   ProgressBar,
   removeNullCharacters,
-  RendererType,
   RenderingStates,
   roundToDivide,
   SCROLLBAR_PADDING,
@@ -890,6 +890,7 @@ export {
   SidebarView,
   SpreadMode,
   TextLayerMode,
+  toggleCheckedBtn,
   UNKNOWN_SCALE,
   VERTICAL_PADDING,
   watchScroll,

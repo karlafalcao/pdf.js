@@ -16,12 +16,12 @@
 import {
   AbortException,
   assert,
-  createPromiseCapability,
   getVerbosityLevel,
   info,
   InvalidPDFException,
   MissingPDFException,
   PasswordException,
+  PromiseCapability,
   setVerbosityLevel,
   stringToPDFString,
   UnexpectedResponseException,
@@ -46,7 +46,7 @@ class WorkerTask {
   constructor(name) {
     this.name = name;
     this.terminated = false;
-    this._capability = createPromiseCapability();
+    this._capability = new PromiseCapability();
   }
 
   get finished() {
@@ -133,10 +133,14 @@ class WorkerMessageHandler {
       // Ensure that (primarily) Node.js users won't accidentally attempt to use
       // a non-translated/non-polyfilled build of the library, since that would
       // quickly fail anyway because of missing functionality.
-      if (typeof ReadableStream === "undefined") {
+      if (
+        (isNodeJS && typeof Path2D === "undefined") ||
+        typeof ReadableStream === "undefined"
+      ) {
         const partialMsg =
           "The browser/environment lacks native support for critical " +
-          "functionality used by the PDF.js library (e.g. `ReadableStream`); ";
+          "functionality used by the PDF.js library " +
+          "(e.g. `Path2D` and/or `ReadableStream`); ";
 
         if (isNodeJS) {
           throw new Error(partialMsg + "please use a `legacy`-build instead.");
@@ -224,7 +228,7 @@ class WorkerMessageHandler {
         password,
         rangeChunkSize,
       };
-      const pdfManagerCapability = createPromiseCapability();
+      const pdfManagerCapability = new PromiseCapability();
       let newPdfManager;
 
       if (data) {
@@ -257,8 +261,7 @@ class WorkerMessageHandler {
           pdfManagerArgs.source = pdfStream;
           pdfManagerArgs.length = fullRequest.contentLength;
           // We don't need auto-fetch when streaming is enabled.
-          pdfManagerArgs.disableAutoFetch =
-            pdfManagerArgs.disableAutoFetch || fullRequest.isStreamingSupported;
+          pdfManagerArgs.disableAutoFetch ||= fullRequest.isStreamingSupported;
 
           newPdfManager = new NetworkPdfManager(pdfManagerArgs);
           // There may be a chance that `newPdfManager` is not initialized for
@@ -305,10 +308,7 @@ class WorkerMessageHandler {
               cancelXHRs = null;
               return;
             }
-            if (
-              typeof PDFJSDev === "undefined" ||
-              PDFJSDev.test("!PRODUCTION || TESTING")
-            ) {
+            if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
               assert(
                 value instanceof ArrayBuffer,
                 "readChunk (getPdfManager) - expected an ArrayBuffer."
@@ -667,7 +667,7 @@ class WorkerMessageHandler {
               infoRef: xref.trailer.getRaw("Info") || null,
               info: infoObj,
               fileIds: xref.trailer.get("ID") || null,
-              startXRef,
+              startXRef: xref.lastXRefStreamPos ?? startXRef,
               filename,
             };
           }
@@ -739,7 +739,7 @@ class WorkerMessageHandler {
     });
 
     handler.on("GetTextContent", function (data, sink) {
-      const pageIndex = data.pageIndex;
+      const { pageIndex, includeMarkedContent, disableNormalization } = data;
 
       pdfManager.getPage(pageIndex).then(function (page) {
         const task = new WorkerTask("GetTextContent: page " + pageIndex);
@@ -753,8 +753,8 @@ class WorkerMessageHandler {
             handler,
             task,
             sink,
-            includeMarkedContent: data.includeMarkedContent,
-            combineTextItems: data.combineTextItems,
+            includeMarkedContent,
+            disableNormalization,
           })
           .then(
             function () {
@@ -835,6 +835,11 @@ class WorkerMessageHandler {
     if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
       handler.on("GetXFADatasets", function (data) {
         return pdfManager.ensureDoc("xfaDatasets");
+      });
+      handler.on("GetXRefPrevValue", function (data) {
+        return pdfManager
+          .ensureXRef("trailer")
+          .then(trailer => trailer.get("Prev"));
       });
     }
 

@@ -19,25 +19,20 @@ import {
   FeatureTest,
   shadow,
   string32,
-  UNSUPPORTED_FEATURES,
   warn,
 } from "../shared/util.js";
 import { isNodeJS } from "../shared/is_node.js";
 
 class FontLoader {
   constructor({
-    onUnsupportedFeature,
     ownerDocument = globalThis.document,
     styleElement = null, // For testing only.
   }) {
-    if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
-      this._onUnsupportedFeature = onUnsupportedFeature;
-    }
     this._document = ownerDocument;
 
     this.nativeFontFaces = [];
     this.styleElement =
-      typeof PDFJSDev === "undefined" || PDFJSDev.test("!PRODUCTION || TESTING")
+      typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")
         ? styleElement
         : null;
 
@@ -90,11 +85,6 @@ class FontLoader {
         try {
           await nativeFontFace.loaded;
         } catch (ex) {
-          if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
-            this._onUnsupportedFeature({
-              featureId: UNSUPPORTED_FEATURES.errorFontLoadNative,
-            });
-          }
           warn(`Failed to load font '${nativeFontFace.family}': '${ex}'.`);
 
           // When font loading failed, fall back to the built-in font renderer.
@@ -126,10 +116,7 @@ class FontLoader {
 
   get isFontLoadingAPISupported() {
     const hasFonts = !!this._document?.fonts;
-    if (
-      typeof PDFJSDev === "undefined" ||
-      PDFJSDev.test("!PRODUCTION || TESTING")
-    ) {
+    if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
       return shadow(
         this,
         "isFontLoadingAPISupported",
@@ -332,8 +319,7 @@ class FontFaceObject {
       isEvalSupported = true,
       disableFontFace = false,
       ignoreErrors = false,
-      onUnsupportedFeature,
-      fontRegistry = null,
+      inspectFont = null,
     }
   ) {
     this.compiledGlyphs = Object.create(null);
@@ -344,10 +330,7 @@ class FontFaceObject {
     this.isEvalSupported = isEvalSupported !== false;
     this.disableFontFace = disableFontFace === true;
     this.ignoreErrors = ignoreErrors === true;
-    if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
-      this._onUnsupportedFeature = onUnsupportedFeature;
-    }
-    this.fontRegistry = fontRegistry;
+    this._inspectFont = inspectFont;
   }
 
   createNativeFontFace() {
@@ -371,7 +354,7 @@ class FontFaceObject {
       );
     }
 
-    this.fontRegistry?.registerFont(this);
+    this._inspectFont?.(this);
     return nativeFontFace;
   }
 
@@ -393,7 +376,7 @@ class FontFaceObject {
       rule = `@font-face {font-family:"${this.cssFontInfo.fontFamily}";${css}src:${url}}`;
     }
 
-    this.fontRegistry?.registerFont(this, url);
+    this._inspectFont?.(this, url);
     return rule;
   }
 
@@ -408,11 +391,6 @@ class FontFaceObject {
     } catch (ex) {
       if (!this.ignoreErrors) {
         throw ex;
-      }
-      if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
-        this._onUnsupportedFeature({
-          featureId: UNSUPPORTED_FEATURES.errorFontGetPath,
-        });
       }
       warn(`getPathGenerator - ignoring character: "${ex}".`);
 
